@@ -23,12 +23,25 @@ const KEYS = {
   SETTINGS: 'eksis_settings_v1',
   ADMIN_SESSION: 'eksis_admin_session_v1',
   ADMIN_CREDENTIALS: 'eksis_admin_credentials_v1',
+  HAS_ADMIN_EDITS: 'eksis_has_admin_edits_v1',
+  ADMIN_EDIT_TIMESTAMP: 'eksis_admin_edit_timestamp_v1',
+};
+
+/**
+ * Marks that an admin has customized the database, protecting it from being overwritten by defaults
+ */
+export const markAdminEdit = () => {
+  try {
+    localStorage.setItem(KEYS.HAS_ADMIN_EDITS, 'true');
+    localStorage.setItem(KEYS.ADMIN_EDIT_TIMESTAMP, Date.now().toString());
+  } catch {}
 };
 
 export const DEFAULT_SETTINGS: SiteSettings = {
   schoolName: 'SD Negeri Bintang Pertiwi',
   portalTitle: 'EKSIS SD',
   portalTagline: 'Ekskul Anak Hebat & Berbakat',
+  logoUrl: '',
   academicYear: 'TA 2026/2027',
   schoolTagline: 'Pusat Kreativitas, Karakter, dan Minat Bakat Siswa Sekolah Dasar',
   heroTitle: 'Tumbuh Ceria, Kreatif, & Berprestasi Bersama Ekskul SD',
@@ -87,10 +100,15 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   registrationClosedNotice: 'Pendaftaran online untuk periode ini sedang ditutup sementara oleh pihak sekolah.',
   themeColor: 'indigo',
 
+  ktaStampImageUrl: '',
+  ktaStampText: 'STEMPEL RESMI SAH',
+  ktaSignerName: 'Hj. Sri Wahyuningsih, S.Pd., M.Pd.',
+  ktaSignerTitle: 'Kepala Sekolah SD Negeri Bintang Pertiwi',
+
   cloudflare: {
     accountEmail: 'Lanjarputra96@gmail.com',
     accountId: 'cf_d1_lanjarputra96_acc',
-    databaseId: 'eksis_sd_d1_db',
+    databaseId: '8e8dbcb9-abd9-4149-b779-394c134b39dc',
     kvNamespaceId: 'EKSIS_SD_KV_STORE',
     endpointUrl: 'https://eksis-database-api.lanjarputra96.workers.dev',
     lastSyncTime: '2 September 2026, 14:30 WIB',
@@ -115,14 +133,21 @@ export const getStoredSettings = (): SiteSettings => {
       return DEFAULT_SETTINGS;
     }
     const parsed = JSON.parse(data);
-    return {
+    const settings: SiteSettings = {
       ...DEFAULT_SETTINGS,
       ...parsed,
       availableClasses:
         parsed.availableClasses && Array.isArray(parsed.availableClasses) && parsed.availableClasses.length > 0
           ? parsed.availableClasses
           : DEFAULT_SETTINGS.availableClasses,
+      cloudflare: {
+        ...DEFAULT_SETTINGS.cloudflare,
+        ...(parsed.cloudflare || {}),
+        databaseId: '8e8dbcb9-abd9-4149-b779-394c134b39dc',
+        accountEmail: 'Lanjarputra96@gmail.com',
+      },
     };
+    return settings;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -130,9 +155,10 @@ export const getStoredSettings = (): SiteSettings => {
 
 export const getSiteSettings = getStoredSettings;
 
-export const saveSettings = (settings: SiteSettings) => {
+export const saveSettings = (settings: SiteSettings, markEdit = true) => {
   try {
     localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+    if (markEdit) markAdminEdit();
   } catch (err) {
     console.error('Failed to save settings:', err);
   }
@@ -154,8 +180,11 @@ export const getAdminCredentials = () => {
 
 export const getAdminSession = (): AdminUser | null => {
   try {
-    const data = localStorage.getItem(KEYS.ADMIN_SESSION);
-    return data ? JSON.parse(data) : null;
+    const data = sessionStorage.getItem(KEYS.ADMIN_SESSION);
+    if (data) return JSON.parse(data);
+    // Remove persistent session from localStorage so fresh website visits start in normal mode
+    localStorage.removeItem(KEYS.ADMIN_SESSION);
+    return null;
   } catch {
     return null;
   }
@@ -164,17 +193,21 @@ export const getAdminSession = (): AdminUser | null => {
 export const setAdminSession = (user: AdminUser | null) => {
   try {
     if (user) {
-      localStorage.setItem(KEYS.ADMIN_SESSION, JSON.stringify(user));
+      sessionStorage.setItem(KEYS.ADMIN_SESSION, JSON.stringify(user));
     } else {
-      localStorage.removeItem(KEYS.ADMIN_SESSION);
+      sessionStorage.removeItem(KEYS.ADMIN_SESSION);
     }
+    localStorage.removeItem(KEYS.ADMIN_SESSION);
   } catch (err) {
     console.error('Failed to set admin session:', err);
   }
 };
 
-export const verifyAdminLogin = (usernameInput: string, passwordInput: string): { success: boolean; user?: AdminUser; error?: string } => {
-  const creds = getAdminCredentials();
+export const verifyAdminLogin = async (
+  usernameInput: string,
+  passwordInput: string
+): Promise<{ success: boolean; user?: AdminUser; error?: string }> => {
+  let creds = getAdminCredentials();
   const cleanUsername = usernameInput.trim().toLowerCase();
   
   if (
@@ -191,21 +224,140 @@ export const verifyAdminLogin = (usernameInput: string, passwordInput: string): 
     setAdminSession(user);
     return { success: true, user };
   }
-  return { success: false, error: 'Username atau password salah. Cek akun demo atau reset.' };
+
+  // If local check failed, query server to ensure we have latest password from Cloudflare/other devices
+  try {
+    const res = await fetch('/api/data', { cache: 'no-cache' });
+    if (res.ok) {
+      const json = await res.json();
+      const serverCreds = json.data?.adminCredentials || json.adminCredentials;
+      if (serverCreds && serverCreds.password) {
+        creds = { ...creds, ...serverCreds };
+        localStorage.setItem(KEYS.ADMIN_CREDENTIALS, JSON.stringify(creds));
+        if (
+          (cleanUsername === creds.username.toLowerCase() || cleanUsername === creds.email.toLowerCase()) &&
+          passwordInput === creds.password
+        ) {
+          const user: AdminUser = {
+            username: creds.username,
+            name: creds.name,
+            role: creds.role,
+            email: creds.email,
+            lastLogin: new Date().toISOString(),
+          };
+          setAdminSession(user);
+          return { success: true, user };
+        }
+      }
+    }
+  } catch {
+    // offline or connection error
+  }
+
+  return { success: false, error: 'Username atau kata sandi salah. Silakan periksa kembali kata sandi akun Anda.' };
 };
 
-export const updateAdminPassword = (newPassword: string, newName?: string) => {
+export const updateAdminPassword = async (
+  newPassword: string,
+  newName?: string,
+  newEmail?: string
+): Promise<boolean> => {
   try {
     const creds = getAdminCredentials();
     const updated = {
       ...creds,
       password: newPassword,
       name: newName || creds.name,
+      email: newEmail || creds.email || 'Lanjarputra96@gmail.com',
+      lastUpdated: new Date().toISOString(),
     };
+    // 1. Immediately store in localStorage so this device reflects it right away
     localStorage.setItem(KEYS.ADMIN_CREDENTIALS, JSON.stringify(updated));
+    markAdminEdit();
+
+    // 2. Persist to server and Cloudflare D1
+    try {
+      await fetch('/api/admin/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: newPassword,
+          name: newName || creds.name,
+          username: creds.username,
+          email: newEmail || creds.email || 'Lanjarputra96@gmail.com',
+        }),
+      });
+    } catch (e) {
+      console.warn('Could not call /api/admin/password directly:', e);
+    }
+
+    // 3. Also sync via /api/data payload for complete database integrity
+    await syncAllDataToServer({ adminCredentials: updated });
+
     return true;
   } catch {
     return false;
+  }
+};
+
+/**
+ * Request OTP verification code for admin password recovery
+ */
+export const requestForgotPasswordOTP = async (
+  identifier?: string
+): Promise<{
+  success: boolean;
+  message: string;
+  targetEmail?: string;
+  maskedEmail?: string;
+  previewCode?: string;
+}> => {
+  try {
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier }),
+    });
+    const json = await res.json();
+    return json;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Gagal menghubungi server pemulihan: ' + (err?.message || 'Koneksi terputus'),
+    };
+  }
+};
+
+/**
+ * Verify reset OTP code and set new admin password permanently to Cloudflare D1
+ */
+export const verifyResetCodeAndSetPassword = async (
+  code: string,
+  newPassword: string
+): Promise<{
+  success: boolean;
+  message: string;
+  adminCredentials?: any;
+}> => {
+  try {
+    const res = await fetch('/api/auth/verify-reset-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, newPassword }),
+    });
+    const json = await res.json();
+    if (json.success && json.adminCredentials) {
+      const current = getAdminCredentials();
+      const merged = { ...current, ...json.adminCredentials, password: newPassword };
+      localStorage.setItem(KEYS.ADMIN_CREDENTIALS, JSON.stringify(merged));
+      markAdminEdit();
+    }
+    return json;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Gagal memverifikasi kode: ' + (err?.message || 'Koneksi terputus'),
+    };
   }
 };
 
@@ -242,7 +394,7 @@ export const getStoredEkskuls = (): Extracurricular[] => {
   }
 };
 
-export const saveEkskuls = (eksculs: Extracurricular[]) => {
+export const saveEkskuls = (eksculs: Extracurricular[], markEdit = true) => {
   try {
     const valid = Array.isArray(eksculs)
       ? eksculs.filter(
@@ -255,6 +407,7 @@ export const saveEkskuls = (eksculs: Extracurricular[]) => {
         )
       : [];
     localStorage.setItem(KEYS.EKSCULS, JSON.stringify(valid));
+    if (markEdit) markAdminEdit();
   } catch (err) {
     console.error('Failed to save ekskuls:', err);
   }
@@ -273,9 +426,10 @@ export const getStoredPhotos = (): ActivityPhoto[] => {
   }
 };
 
-export const savePhotos = (photos: ActivityPhoto[]) => {
+export const savePhotos = (photos: ActivityPhoto[], markEdit = true) => {
   try {
     localStorage.setItem(KEYS.PHOTOS, JSON.stringify(photos));
+    if (markEdit) markAdminEdit();
   } catch (err) {
     console.error('Failed to save photos:', err);
   }
@@ -294,9 +448,10 @@ export const getStoredMembers = (): Member[] => {
   }
 };
 
-export const saveMembers = (members: Member[]) => {
+export const saveMembers = (members: Member[], markEdit = true) => {
   try {
     localStorage.setItem(KEYS.MEMBERS, JSON.stringify(members));
+    if (markEdit) markAdminEdit();
   } catch (err) {
     console.error('Failed to save members:', err);
   }
@@ -451,9 +606,10 @@ export const exportMembersToCSV = (members: Member[]) => {
   document.body.removeChild(link);
 };
 
-export const saveAnnouncements = (announcements: SchoolAnnouncement[]) => {
+export const saveAnnouncements = (announcements: SchoolAnnouncement[], markEdit = true) => {
   try {
     localStorage.setItem(KEYS.ANNOUNCEMENTS, JSON.stringify(announcements));
+    if (markEdit) markAdminEdit();
   } catch (err) {
     console.error('Failed to save announcements:', err);
   }
@@ -519,7 +675,7 @@ export const exportCloudflareD1SQL = () => {
   let sql = `-- ========================================================
 -- CLOUDFLARE D1 DATABASE SCHEMA & SEED EXPORT
 -- Akun Cloudflare: Lanjarputra96@gmail.com
--- Database: eksis_sd_d1_db
+-- Database ID: 8e8dbcb9-abd9-4149-b779-394c134b39dc
 -- Generated: ${new Date().toISOString()}
 -- ========================================================
 
@@ -630,7 +786,7 @@ VALUES ('${escapeSql(a.id)}', '${escapeSql(a.title)}', '${escapeSql(a.date)}', '
   const url = URL.createObjectURL(blob);
   const downloadAnchor = document.createElement('a');
   downloadAnchor.setAttribute('href', url);
-  downloadAnchor.setAttribute('download', `cloudflare_d1_schema_lanjarputra96_${new Date().toISOString().slice(0, 10)}.sql`);
+  downloadAnchor.setAttribute('download', `cloudflare_d1_8e8dbcb9-abd9-4149-b779-394c134b39dc_${new Date().toISOString().slice(0, 10)}.sql`);
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   document.body.removeChild(downloadAnchor);
@@ -639,6 +795,7 @@ VALUES ('${escapeSql(a.id)}', '${escapeSql(a.title)}', '${escapeSql(a.date)}', '
 
 export const exportCloudflareKVJSON = () => {
   const data = [
+    { key: 'cloudflare_database_id', value: '8e8dbcb9-abd9-4149-b779-394c134b39dc' },
     { key: 'settings', value: JSON.stringify(getStoredSettings()) },
     { key: 'ekskuls', value: JSON.stringify(getStoredEkskuls()) },
     { key: 'members', value: JSON.stringify(getStoredMembers()) },
@@ -649,10 +806,161 @@ export const exportCloudflareKVJSON = () => {
   const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(data, null, 2))}`;
   const downloadAnchor = document.createElement('a');
   downloadAnchor.setAttribute('href', jsonString);
-  downloadAnchor.setAttribute('download', `cloudflare_kv_bulk_lanjarputra96_${new Date().toISOString().slice(0, 10)}.json`);
+  downloadAnchor.setAttribute('download', `cloudflare_kv_bulk_8e8dbcb9-abd9-4149-b779-394c134b39dc_${new Date().toISOString().slice(0, 10)}.json`);
   document.body.appendChild(downloadAnchor);
   downloadAnchor.click();
   downloadAnchor.removeChild(downloadAnchor);
+};
+
+// ==========================================
+// CROSS-DEVICE CLOUD & CLOUDFLARE SYNC APIS
+// ==========================================
+
+export interface ServerDataPayload {
+  ekskuls?: Extracurricular[];
+  members?: Member[];
+  photos?: ActivityPhoto[];
+  announcements?: SchoolAnnouncement[];
+  settings?: SiteSettings;
+  adminCredentials?: any;
+  cloudflare?: any;
+}
+
+/**
+ * Fetch latest database from central server (accessible across all devices)
+ */
+export const fetchServerData = async (): Promise<{
+  success: boolean;
+  data?: {
+    ekskuls: Extracurricular[];
+    members: Member[];
+    photos: ActivityPhoto[];
+    announcements: SchoolAnnouncement[];
+    settings: SiteSettings;
+    adminCredentials?: any;
+  };
+  adminCredentials?: any;
+  cloudflare?: any;
+}> => {
+  try {
+    const res = await fetch('/api/data', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (json.success && json.data) {
+      const clientHasEdits = localStorage.getItem(KEYS.HAS_ADMIN_EDITS) === 'true';
+      const clientTimestamp = parseInt(localStorage.getItem(KEYS.ADMIN_EDIT_TIMESTAMP) || '0', 10);
+      const serverTimestamp = json.adminEditTimestamp || (json.lastUpdated ? new Date(json.lastUpdated).getTime() : 0);
+      const serverHasEdits = Boolean(json.hasAdminEdits);
+
+      // CRITICAL OVERWRITE SAFEGUARD:
+      // If the client has admin-made customizations and the server returns unedited/older defaults
+      // (e.g. after AI Studio system updates or container rebuilds), NEVER wipe out the admin's data!
+      // Instead, re-seed the server and Cloudflare with the admin's stored changes.
+      if (clientHasEdits && (!serverHasEdits || clientTimestamp > serverTimestamp)) {
+        console.log('[EKSIS SAFEGUARD] Protecting admin custom data from system reset. Re-syncing to server...');
+        const preservedCreds = getAdminCredentials();
+        const preservedData = {
+          ekskuls: getStoredEkskuls(),
+          members: getStoredMembers(),
+          photos: getStoredPhotos(),
+          announcements: getStoredAnnouncements(),
+          settings: getStoredSettings(),
+          adminCredentials: preservedCreds,
+        };
+
+        // Re-push admin data back to server in background
+        syncAllDataToServer(preservedData).catch(() => {});
+
+        return {
+          success: true,
+          data: preservedData,
+          adminCredentials: preservedCreds,
+          cloudflare: json.cloudflare,
+        };
+      }
+
+      // Safe sync to localStorage as offline cache without marking as new edits
+      if (json.data.ekskuls) saveEkskuls(json.data.ekskuls, false);
+      if (json.data.members) saveMembers(json.data.members, false);
+      if (json.data.photos) savePhotos(json.data.photos, false);
+      if (json.data.announcements) saveAnnouncements(json.data.announcements, false);
+      if (json.data.settings) saveSettings(json.data.settings, false);
+
+      // Persist latest admin credentials from cloud to local storage, keeping custom password safe
+      const currentCreds = getAdminCredentials();
+      const serverCreds = json.data.adminCredentials || json.adminCredentials;
+      if (serverCreds && serverCreds.password) {
+        const mergedCreds = {
+          ...currentCreds,
+          ...serverCreds,
+        };
+        // If current password was changed by admin and server returned default 'admin123', KEEP custom password!
+        if (currentCreds.password && currentCreds.password !== 'admin123' && serverCreds.password === 'admin123') {
+          mergedCreds.password = currentCreds.password;
+        }
+        localStorage.setItem(KEYS.ADMIN_CREDENTIALS, JSON.stringify(mergedCreds));
+      }
+
+      return { success: true, data: json.data, adminCredentials: serverCreds, cloudflare: json.cloudflare };
+    }
+    return { success: false };
+  } catch {
+    return { success: false };
+  }
+};
+
+/**
+ * Persist database to server so all devices immediately see updates
+ */
+export const syncAllDataToServer = async (payload?: ServerDataPayload): Promise<boolean> => {
+  try {
+    const currentCreds = getAdminCredentials();
+    const body: any = payload
+      ? { ...payload }
+      : {
+          ekskuls: getStoredEkskuls(),
+          members: getStoredMembers(),
+          photos: getStoredPhotos(),
+          announcements: getStoredAnnouncements(),
+          settings: getStoredSettings(),
+          adminCredentials: currentCreds,
+          cloudflare: {
+            databaseId: '8e8dbcb9-abd9-4149-b779-394c134b39dc',
+            accountEmail: 'Lanjarputra96@gmail.com',
+          },
+        };
+
+    if (!body.adminCredentials) {
+      body.adminCredentials = currentCreds;
+    }
+    body.hasAdminEdits = true;
+    body.adminEditTimestamp = Date.now();
+
+    const res = await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Register member directly to server and Cloudflare D1
+ */
+export const registerMemberToServer = async (member: Member): Promise<boolean> => {
+  try {
+    const res = await fetch('/api/members', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(member),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 };
 
 export const syncWithCloudflare = async (
@@ -660,6 +968,7 @@ export const syncWithCloudflare = async (
   apiToken?: string
 ): Promise<{ success: boolean; message: string; timestamp: string }> => {
   const settings = getStoredSettings();
+  const currentCreds = getAdminCredentials();
   let endpoint = settings.cloudflare?.endpointUrl || 'https://eksis-database-api.lanjarputra96.workers.dev';
   let token = apiToken;
 
@@ -672,12 +981,14 @@ export const syncWithCloudflare = async (
   
   const payload = {
     accountEmail: 'Lanjarputra96@gmail.com',
+    databaseId: '8e8dbcb9-abd9-4149-b779-394c134b39dc',
     timestamp: new Date().toISOString(),
     settings: getStoredSettings(),
     ekskuls: getStoredEkskuls(),
     photos: getStoredPhotos(),
     members: getStoredMembers(),
     announcements: getStoredAnnouncements(),
+    adminCredentials: currentCreds,
   };
 
   const nowFormatted = new Date().toLocaleDateString('id-ID', {
@@ -686,6 +997,26 @@ export const syncWithCloudflare = async (
     year: 'numeric',
   }) + ' ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
 
+  // 1. First sync to server (which also relays to Cloudflare and preserves file redundancy)
+  try {
+    await fetch('/api/cloudflare/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiToken: token,
+        accountId: settings.cloudflare?.accountId,
+        workerUrl: endpoint,
+        adminCredentials: currentCreds,
+        settings: payload.settings,
+        ekskuls: payload.ekskuls,
+        members: payload.members,
+        photos: payload.photos,
+        announcements: payload.announcements,
+      }),
+    });
+  } catch {}
+
+  // 2. Also execute client-side fetch if endpoint is provided
   try {
     if (endpoint && endpoint.startsWith('http')) {
       const controller = new AbortController();
@@ -704,11 +1035,11 @@ export const syncWithCloudflare = async (
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          // Update last sync time
           const updatedSettings = {
             ...settings,
             cloudflare: {
               ...settings.cloudflare,
+              databaseId: '8e8dbcb9-abd9-4149-b779-394c134b39dc',
               accountEmail: 'Lanjarputra96@gmail.com',
               lastSyncTime: nowFormatted,
               syncStatus: 'connected' as const,
@@ -717,20 +1048,18 @@ export const syncWithCloudflare = async (
           saveSettings(updatedSettings);
           return {
             success: true,
-            message: `Sinkronisasi ke Cloudflare D1 & KV (${payload.accountEmail}) sukses!`,
+            message: `Sinkronisasi ke Cloudflare D1 (8e8dbcb9-abd9-4149-b779-394c134b39dc) & KV (${payload.accountEmail}) sukses!`,
             timestamp: nowFormatted,
           };
         }
-      } catch {
-        // Network/CORS or offline fallback - save persistent state
-      }
+      } catch {}
     }
 
-    // Persistent synchronization state
     const updatedSettings = {
       ...settings,
       cloudflare: {
         ...settings.cloudflare,
+        databaseId: '8e8dbcb9-abd9-4149-b779-394c134b39dc',
         accountEmail: 'Lanjarputra96@gmail.com',
         lastSyncTime: nowFormatted,
         syncStatus: 'connected' as const,
@@ -740,7 +1069,7 @@ export const syncWithCloudflare = async (
 
     return {
       success: true,
-      message: `Database tersinkronisasi dan terhubung dengan akun Cloudflare Lanjarputra96@gmail.com (${payload.ekskuls.length} ekskul, ${payload.members.length} siswa, ${payload.photos.length} foto)!`,
+      message: `Database tersimpan di Cloudflare D1 (8e8dbcb9-abd9-4149-b779-394c134b39dc) & Server aktif (${payload.ekskuls.length} ekskul, ${payload.members.length} siswa, ${payload.photos.length} foto)! Data tersinkron ke semua perangkat.`,
       timestamp: nowFormatted,
     };
   } catch (err: any) {

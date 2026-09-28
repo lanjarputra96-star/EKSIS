@@ -15,6 +15,7 @@ import { getSiteSettings } from '../utils/storage';
 interface DigitalIdCardProps {
   member: Member;
   ekskul?: Extracurricular;
+  siteSettings?: SiteSettings;
   schoolName?: string;
   portalTitle?: string;
   academicYear?: string;
@@ -24,6 +25,7 @@ interface DigitalIdCardProps {
 export const DigitalIdCard: React.FC<DigitalIdCardProps> = ({
   member,
   ekskul,
+  siteSettings,
   schoolName,
   portalTitle,
   academicYear,
@@ -32,10 +34,11 @@ export const DigitalIdCard: React.FC<DigitalIdCardProps> = ({
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Retrieve current settings as fallback
-  const currentSettings = getSiteSettings();
+  const currentSettings = siteSettings || getSiteSettings();
   const effectiveSchoolName = schoolName || currentSettings.schoolName || 'SD NEGERI BINTANG PERTIWI';
   const effectivePortalTitle = portalTitle || currentSettings.portalTitle || 'EKSIS SD';
   const effectiveAcademicYear = academicYear || currentSettings.academicYear || 'TA 2026/2027';
+  const effectiveLogoUrl = currentSettings.logoUrl;
 
   const handlePrint = () => {
     window.print();
@@ -56,9 +59,19 @@ export const DigitalIdCard: React.FC<DigitalIdCardProps> = ({
         {/* Card Header */}
         <div className="flex items-center justify-between pb-3.5 border-b border-indigo-400/20 relative z-10">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center font-black text-white text-base shadow-sm">
-              {effectivePortalTitle.charAt(0) || 'E'}
-            </div>
+            {effectiveLogoUrl ? (
+              <div className="w-10 h-10 rounded-xl bg-white p-1 shadow-md border border-white/30 flex items-center justify-center shrink-0">
+                <img
+                  src={effectiveLogoUrl}
+                  alt={effectivePortalTitle}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center font-black text-white text-base shadow-sm shrink-0">
+                {effectivePortalTitle.charAt(0) || 'E'}
+              </div>
+            )}
             <div>
               <h3 className="font-extrabold text-xs tracking-wider uppercase text-cyan-300">
                 {effectiveSchoolName}
@@ -155,14 +168,42 @@ export const DigitalIdCard: React.FC<DigitalIdCardProps> = ({
           </div>
 
           <div className="text-right">
-            <div className="inline-block px-2 py-1 rounded bg-indigo-900/60 border border-indigo-400/30 text-center">
-              <span className="text-[8px] text-indigo-300 block uppercase font-semibold">
-                Stempel Resmi
-              </span>
-              <span className="text-[9px] font-black text-emerald-400 flex items-center gap-0.5">
-                <CheckCircle2 className="w-2.5 h-2.5" /> {effectivePortalTitle} SAH
-              </span>
-            </div>
+            {currentSettings.ktaStampImageUrl ? (
+              <div className="flex flex-col items-end">
+                <div className="relative">
+                  <img
+                    src={currentSettings.ktaStampImageUrl}
+                    alt="Stempel Resmi"
+                    className="h-10 w-auto max-w-[100px] object-contain rotate-[-4deg] drop-shadow-md"
+                  />
+                </div>
+                {currentSettings.ktaSignerName && (
+                  <div className="text-right mt-0.5 leading-tight">
+                    <span className="text-[8px] font-bold text-slate-100 block underline decoration-indigo-400">
+                      {currentSettings.ktaSignerName}
+                    </span>
+                    <span className="text-[7px] text-indigo-300 block">
+                      {currentSettings.ktaSignerTitle || 'Pengesah KTA'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="inline-block px-2.5 py-1 rounded-xl bg-indigo-900/70 border border-indigo-400/30 text-center shadow-xs">
+                <span className="text-[7px] text-indigo-300 block uppercase font-semibold">
+                  Stempel Resmi
+                </span>
+                <span className="text-[9px] font-black text-emerald-400 flex items-center justify-center gap-1">
+                  <CheckCircle2 className="w-2.5 h-2.5" />
+                  <span>{currentSettings.ktaStampText || `${effectivePortalTitle} SAH`}</span>
+                </span>
+                {currentSettings.ktaSignerName && (
+                  <span className="text-[7px] text-slate-300 block mt-0.5 pt-0.5 border-t border-indigo-700/60 font-medium">
+                    {currentSettings.ktaSignerName}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

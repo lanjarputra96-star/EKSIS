@@ -171,6 +171,7 @@ export interface SiteSettings {
   schoolName: string;
   portalTitle: string;
   portalTagline: string;
+  logoUrl?: string; // Logo sekolah / portal ekskul untuk landing page, navbar, footer & KTA
   academicYear: string;
   schoolTagline: string;
   heroTitle: string;
@@ -225,6 +226,12 @@ export interface SiteSettings {
   allowOnlineRegistration: boolean;
   registrationClosedNotice?: string;
   themeColor: 'indigo' | 'emerald' | 'blue' | 'purple' | 'amber' | 'rose' | 'slate';
+
+  // KTA (Kartu Tanda Anggota) & Stempel Resmi
+  ktaStampImageUrl?: string; // Upload stempel resmi (PNG/JPG transparan)
+  ktaStampText?: string;     // Teks stempel (contoh: STEMPEL RESMI SAH)
+  ktaSignerName?: string;    // Nama penandatangan / Kepala Sekolah / Pembina
+  ktaSignerTitle?: string;   // Jabatan pengesah KTA
 
   // Cloudflare Database Sync
   cloudflare?: CloudflareConfig;

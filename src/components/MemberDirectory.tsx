@@ -23,17 +23,24 @@ import {
   List,
   Eye,
   AlertCircle,
+  Layers,
+  AlertTriangle,
 } from 'lucide-react';
-import { Member, Extracurricular, MemberRole, MemberStatus } from '../types';
+import { Member, Extracurricular, MemberRole, MemberStatus, SiteSettings } from '../types';
 import { exportMembersToCSV } from '../utils/storage';
 import { DigitalIdCard } from './DigitalIdCard';
 
 interface MemberDirectoryProps {
   members: Member[];
   ekskuls: Extracurricular[];
+  siteSettings?: SiteSettings;
+  isAdmin?: boolean;
   onUpdateMemberStatus: (memberId: string, status: MemberStatus) => void;
   onUpdateMemberRole: (memberId: string, role: MemberRole) => void;
   onDeleteMember: (memberId: string) => void;
+  onDeleteMultipleMembers?: (memberIds: string[]) => void;
+  onDeleteMembersByEkskul?: (ekskulId: string) => void;
+  onDeleteAllMembers?: () => void;
   onAddManualMember: (member: Member) => void;
   onEditMember: (member: Member) => void;
 }
@@ -52,9 +59,14 @@ const ROLES: MemberRole[] = [
 export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
   members,
   ekskuls,
+  siteSettings,
+  isAdmin = false,
   onUpdateMemberStatus,
   onUpdateMemberRole,
   onDeleteMember,
+  onDeleteMultipleMembers,
+  onDeleteMembersByEkskul,
+  onDeleteAllMembers,
   onAddManualMember,
   onEditMember,
 }) => {
@@ -69,6 +81,14 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
   const [selectedMemberForCard, setSelectedMemberForCard] = useState<Member | null>(null);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Bulk selection state (Admin)
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showDeleteByEkskulModal, setShowDeleteByEkskulModal] = useState(false);
+  const [selectedEkskulForBulkDelete, setSelectedEkskulForBulkDelete] = useState<string>(ekskuls[0]?.id || '');
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [memberToDeleteSingle, setMemberToDeleteSingle] = useState<Member | null>(null);
 
   // New manual member state
   const [newMemberForm, setNewMemberForm] = useState({
@@ -103,6 +123,32 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
 
     return matchesSearch && matchesEkskul && matchesStatus && matchesRole && matchesClass;
   });
+
+  const allVisibleSelected =
+    filteredMembers.length > 0 &&
+    filteredMembers.every((m) => selectedMemberIds.includes(m.id));
+
+  const someVisibleSelected =
+    filteredMembers.some((m) => selectedMemberIds.includes(m.id)) && !allVisibleSelected;
+
+  const handleToggleSelectAllVisible = () => {
+    if (allVisibleSelected) {
+      const visibleIdSet = new Set(filteredMembers.map((m) => m.id));
+      setSelectedMemberIds(selectedMemberIds.filter((id) => !visibleIdSet.has(id)));
+    } else {
+      const visibleIds = filteredMembers.map((m) => m.id);
+      const newSet = new Set([...selectedMemberIds, ...visibleIds]);
+      setSelectedMemberIds(Array.from(newSet));
+    }
+  };
+
+  const handleToggleSelectMember = (id: string) => {
+    if (selectedMemberIds.includes(id)) {
+      setSelectedMemberIds(selectedMemberIds.filter((mId) => mId !== id));
+    } else {
+      setSelectedMemberIds([...selectedMemberIds, id]);
+    }
+  };
 
   const pendingCount = members.filter((m) => m.status === 'pending').length;
   const activeCount = members.filter((m) => m.status === 'active').length;
@@ -190,13 +236,15 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
             <span>Ekspor CSV / Excel</span>
           </button>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-indigo-600/20 transition-all cursor-pointer"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Tambah Anggota Manual</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-indigo-600/20 transition-all cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Tambah Anggota Manual</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -329,6 +377,79 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
         </div>
       </div>
 
+      {/* Admin Bulk Management Bar */}
+      {isAdmin && (
+        <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someVisibleSelected;
+                }}
+                onChange={handleToggleSelectAllVisible}
+                className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <span>Pilih Semua ({filteredMembers.length} Siswa Tampil)</span>
+            </label>
+
+            {selectedMemberIds.length > 0 && (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                {selectedMemberIds.length} Siswa Terpilih
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedMemberIds.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkDeleteModal(true)}
+                  className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus yang Diceklis ({selectedMemberIds.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMemberIds([])}
+                  className="px-2.5 py-1.5 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Batal Pilih
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (ekskuls.length > 0 && !selectedEkskulForBulkDelete) {
+                  setSelectedEkskulForBulkDelete(ekskuls[0].id);
+                }
+                setShowDeleteByEkskulModal(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Hapus seluruh anggota pada cabang ekskul tertentu"
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-600" />
+              <span>Hapus Per Ekskul</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowDeleteAllModal(true)}
+              className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Hapus seluruh data anggota siswa di sekolah"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Hapus Seluruhnya</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Members List Table or Grid */}
       {filteredMembers.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 p-8">
@@ -357,6 +478,20 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                 <tr>
+                  {isAdmin && (
+                    <th className="w-10 px-3 py-3.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someVisibleSelected;
+                        }}
+                        onChange={handleToggleSelectAllVisible}
+                        className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        aria-label="Pilih Semua"
+                      />
+                    </th>
+                  )}
                   <th className="px-4 py-3.5">Anggota</th>
                   <th className="px-4 py-3.5">NISN & Kelas</th>
                   <th className="px-4 py-3.5">Ekskul</th>
@@ -368,11 +503,25 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredMembers.map((member) => {
+                  const isSelected = selectedMemberIds.includes(member.id);
                   return (
                     <tr
                       key={member.id}
-                      className="hover:bg-slate-50/80 transition-colors"
+                      className={`hover:bg-slate-50/80 transition-colors ${
+                        isSelected ? 'bg-indigo-50/50' : ''
+                      }`}
                     >
+                      {isAdmin && (
+                        <td className="w-10 px-3 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleSelectMember(member.id)}
+                            className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                            aria-label={`Pilih ${member.fullName}`}
+                          />
+                        </td>
+                      )}
                       {/* Member profile */}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -409,21 +558,27 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
                         </span>
                       </td>
 
-                      {/* Role Dropdown */}
+                      {/* Role */}
                       <td className="px-4 py-3">
-                        <select
-                          value={member.role}
-                          onChange={(e) =>
-                            onUpdateMemberRole(member.id, e.target.value as MemberRole)
-                          }
-                          className="py-1 px-2 text-[11px] font-semibold rounded-lg bg-slate-50 border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        >
-                          {ROLES.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
+                        {isAdmin ? (
+                          <select
+                            value={member.role}
+                            onChange={(e) =>
+                              onUpdateMemberRole(member.id, e.target.value as MemberRole)
+                            }
+                            className="py-1 px-2 text-[11px] font-semibold rounded-lg bg-slate-50 border border-slate-200 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          >
+                            {ROLES.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700">
+                            {member.role}
+                          </span>
+                        )}
                       </td>
 
                       {/* Status */}
@@ -434,23 +589,30 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
                             <span>Aktif</span>
                           </span>
                         ) : member.status === 'pending' ? (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => onUpdateMemberStatus(member.id, 'active')}
-                              className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs cursor-pointer"
-                              title="Terima Siswa"
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>Terima</span>
-                            </button>
-                            <button
-                              onClick={() => onUpdateMemberStatus(member.id, 'rejected')}
-                              className="p-1 rounded text-rose-600 hover:bg-rose-50"
-                              title="Tolak"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          isAdmin ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => onUpdateMemberStatus(member.id, 'active')}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs cursor-pointer"
+                                title="Terima Siswa"
+                              >
+                                <Check className="w-3 h-3" />
+                                <span>Terima</span>
+                              </button>
+                              <button
+                                onClick={() => onUpdateMemberStatus(member.id, 'rejected')}
+                                className="p-1 rounded text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                title="Tolak"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                              <Clock className="w-3 h-3" />
+                              <span>Menunggu</span>
+                            </span>
+                          )
                         ) : member.status === 'rejected' ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
                             <X className="w-3 h-3" />
@@ -483,20 +645,24 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
                           >
                             <CreditCard className="w-4 h-4" />
                           </button>
-                          <button
-                            onClick={() => setEditingMember(member)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-                            title="Edit Data"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => onDeleteMember(member.id)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                            title="Hapus"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {isAdmin && (
+                            <>
+                              <button
+                                onClick={() => setEditingMember(member)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                                title="Edit Data"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => onDeleteMember(member.id)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Hapus"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -509,17 +675,30 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
       ) : (
         /* Grid View */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredMembers.map((member) => (
-            <div
-              key={member.id}
-              className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-3"
-            >
-              <div className="flex items-start gap-3">
-                <img
-                  src={member.avatar}
-                  alt={member.fullName}
-                  className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
-                />
+          {filteredMembers.map((member) => {
+            const isSelected = selectedMemberIds.includes(member.id);
+            return (
+              <div
+                key={member.id}
+                className={`bg-white rounded-2xl border p-4 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-3 ${
+                  isSelected ? 'border-indigo-400 ring-1 ring-indigo-300 bg-indigo-50/20' : 'border-slate-200'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {isAdmin && (
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleToggleSelectMember(member.id)}
+                      className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0 mt-1"
+                      aria-label={`Pilih ${member.fullName}`}
+                    />
+                  )}
+                  <img
+                    src={member.avatar}
+                    alt={member.fullName}
+                    className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
+                  />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-50 text-indigo-700">
@@ -570,31 +749,36 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
                   <span>KTA Digital</span>
                 </button>
 
-                <div className="flex items-center gap-1">
-                  {member.status === 'pending' && (
+                {isAdmin && (
+                  <div className="flex items-center gap-1">
+                    {member.status === 'pending' && (
+                      <button
+                        onClick={() => onUpdateMemberStatus(member.id, 'active')}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
+                      >
+                        Terima
+                      </button>
+                    )}
                     <button
-                      onClick={() => onUpdateMemberStatus(member.id, 'active')}
-                      className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700"
+                      onClick={() => setEditingMember(member)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer"
+                      title="Edit Data"
                     >
-                      Terima
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
-                  )}
-                  <button
-                    onClick={() => setEditingMember(member)}
-                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => onDeleteMember(member.id)}
-                    className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                    <button
+                      onClick={() => onDeleteMember(member.id)}
+                      className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 cursor-pointer"
+                      title="Hapus"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
-          ))}
+          );
+        })}
         </div>
       )}
 
@@ -617,6 +801,7 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
 
             <DigitalIdCard
               member={selectedMemberForCard}
+              siteSettings={siteSettings}
               onClose={() => setSelectedMemberForCard(null)}
             />
           </div>
@@ -906,6 +1091,177 @@ export const MemberDirectory: React.FC<MemberDirectoryProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Hapus Anggota Ceklis (Bulk Delete) */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h4 className="text-base font-extrabold text-slate-900 mb-1">
+              Hapus {selectedMemberIds.length} Siswa yang Diceklis?
+            </h4>
+            <p className="text-xs text-slate-600 leading-relaxed mb-4">
+              Apakah Anda yakin ingin menghapus <strong>{selectedMemberIds.length} data anggota siswa</strong> yang telah Anda pilih? Data akan dihapus permanen dari sistem dan disinkronkan ke Cloudflare.
+            </p>
+
+            <div className="max-h-36 overflow-y-auto p-2.5 bg-slate-50 rounded-xl border border-slate-200 mb-5 space-y-1">
+              {members
+                .filter((m) => selectedMemberIds.includes(m.id))
+                .map((m) => (
+                  <div key={m.id} className="text-[11px] text-slate-700 flex items-center justify-between">
+                    <span className="font-semibold truncate max-w-[200px]">{m.fullName}</span>
+                    <span className="text-[10px] text-slate-500">{m.ekskulName}</span>
+                  </div>
+                ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteMultipleMembers) {
+                    onDeleteMultipleMembers(selectedMemberIds);
+                  } else {
+                    selectedMemberIds.forEach((id) => onDeleteMember(id));
+                  }
+                  setSelectedMemberIds([]);
+                  setShowBulkDeleteModal(false);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+              >
+                Ya, Hapus {selectedMemberIds.length} Siswa Terpilih
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Hapus Anggota Per Ekskul */}
+      {showDeleteByEkskulModal && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mb-4">
+              <Layers className="w-6 h-6" />
+            </div>
+            <h4 className="text-base font-extrabold text-slate-900 mb-1">
+              Hapus Anggota Per Cabang Ekskul
+            </h4>
+            <p className="text-xs text-slate-600 leading-relaxed mb-4">
+              Pilih cabang ekstrakurikuler yang ingin Anda hapus seluruh data anggotanya:
+            </p>
+
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Pilih Cabang Ekskul:
+              </label>
+              <select
+                value={selectedEkskulForBulkDelete}
+                onChange={(e) => setSelectedEkskulForBulkDelete(e.target.value)}
+                className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 border border-slate-300 font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+              >
+                {ekskuls.map((ek) => {
+                  const count = members.filter((m) => m.ekskulId === ek.id).length;
+                  return (
+                    <option key={ek.id} value={ek.id}>
+                      {ek.name} ({count} Anggota)
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {(() => {
+              const targetEkskul = ekskuls.find((e) => e.id === selectedEkskulForBulkDelete);
+              const count = members.filter((m) => m.ekskulId === selectedEkskulForBulkDelete).length;
+              return (
+                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 mb-5 font-medium">
+                  Akan menghapus <strong>{count} anggota</strong> dari ekstrakurikuler{' '}
+                  <strong>{targetEkskul?.name || 'terpilih'}</strong>.
+                </div>
+              );
+            })()}
+
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowDeleteByEkskulModal(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={!selectedEkskulForBulkDelete}
+                onClick={() => {
+                  if (onDeleteMembersByEkskul && selectedEkskulForBulkDelete) {
+                    onDeleteMembersByEkskul(selectedEkskulForBulkDelete);
+                  }
+                  setSelectedMemberIds((prev) =>
+                    prev.filter((id) => {
+                      const m = members.find((mem) => mem.id === id);
+                      return m?.ekskulId !== selectedEkskulForBulkDelete;
+                    })
+                  );
+                  setShowDeleteByEkskulModal(false);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50"
+              >
+                Hapus Anggota di Ekskul Ini
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Hapus Seluruh Anggota */}
+      {showDeleteAllModal && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <h4 className="text-base font-extrabold text-slate-900 mb-1">
+              Hapus Seluruh Data Anggota ({members.length} Siswa)?
+            </h4>
+            <p className="text-xs text-rose-700 bg-rose-50 p-3 rounded-xl border border-rose-200 leading-relaxed mb-4 font-medium">
+              <strong>PERHATIAN:</strong> Tindakan ini akan menghapus <strong>seluruh data siswa ({members.length} siswa)</strong> dari seluruh cabang ekstrakurikuler di sistem. Data yang dihapus akan segera disinkronkan ke Cloudflare.
+            </p>
+            <div className="flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllModal(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteAllMembers) {
+                    onDeleteAllMembers();
+                  } else {
+                    members.forEach((m) => onDeleteMember(m.id));
+                  }
+                  setSelectedMemberIds([]);
+                  setShowDeleteAllModal(false);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+              >
+                Ya, Hapus Seluruh Anggota
+              </button>
+            </div>
           </div>
         </div>
       )}

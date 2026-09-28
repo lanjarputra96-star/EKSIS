@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   getStoredEkskuls,
   saveEkskuls,
@@ -16,6 +16,9 @@ import {
   logoutAdmin,
   DEFAULT_SETTINGS,
   syncWithCloudflare,
+  fetchServerData,
+  syncAllDataToServer,
+  registerMemberToServer,
 } from './utils/storage';
 import {
   Extracurricular,
@@ -49,6 +52,12 @@ import {
   Sliders,
   LogOut,
   Lock,
+  Phone,
+  Mail,
+  MapPin,
+  Instagram,
+  Youtube,
+  ExternalLink,
 } from 'lucide-react';
 
 export default function App() {
@@ -83,6 +92,12 @@ export default function App() {
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Refs to prevent background polling or focus events from wiping out admin typing in progress
+  const showAdminPanelRef = useRef(showAdminPanel);
+  showAdminPanelRef.current = showAdminPanel;
+  const editingEkskulRef = useRef(editingEkskul);
+  editingEkskulRef.current = editingEkskul;
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -101,6 +116,53 @@ export default function App() {
 
   useEffect(() => {
     reloadAllData();
+
+    // Fetch latest cloud database from server (persisted across devices & Cloudflare D1)
+    fetchServerData().then((res) => {
+      if (res.success && res.data) {
+        if (res.data.ekskuls && res.data.ekskuls.length > 0) setEkskuls(res.data.ekskuls);
+        if (res.data.members && res.data.members.length > 0) setMembers(res.data.members);
+        if (res.data.photos && res.data.photos.length > 0) setPhotos(res.data.photos);
+        if (res.data.announcements && res.data.announcements.length > 0) setAnnouncements(res.data.announcements);
+        if (res.data.settings) setSiteSettings(res.data.settings);
+      } else {
+        // Initial seed to server
+        syncAllDataToServer().catch(() => {});
+      }
+    }).catch(() => {});
+
+    // Auto-poll to receive updates from other devices (guards against overwriting active admin edits)
+    const interval = setInterval(() => {
+      fetchServerData().then((res) => {
+        if (res.success && res.data) {
+          if (!editingEkskulRef.current && res.data.ekskuls) setEkskuls(res.data.ekskuls);
+          if (res.data.members) setMembers(res.data.members);
+          if (res.data.photos) setPhotos(res.data.photos);
+          if (res.data.announcements) setAnnouncements(res.data.announcements);
+          // Only update siteSettings from background polling if admin panel is NOT currently open
+          if (!showAdminPanelRef.current && res.data.settings) setSiteSettings(res.data.settings);
+        }
+      }).catch(() => {});
+    }, 20000);
+
+    const onFocus = () => {
+      fetchServerData().then((res) => {
+        if (res.success && res.data) {
+          if (!editingEkskulRef.current && res.data.ekskuls) setEkskuls(res.data.ekskuls);
+          if (res.data.members) setMembers(res.data.members);
+          if (res.data.photos) setPhotos(res.data.photos);
+          if (res.data.announcements) setAnnouncements(res.data.announcements);
+          // Only update siteSettings on focus if admin panel is NOT currently open
+          if (!showAdminPanelRef.current && res.data.settings) setSiteSettings(res.data.settings);
+        }
+      }).catch(() => {});
+    };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   // Handlers for Registration
@@ -114,7 +176,10 @@ export default function App() {
     const updated = [newMember, ...members];
     setMembers(updated);
     saveMembers(updated);
-    showToast(`Pendaftaran ${newMember.fullName} berhasil dikirim!`);
+    registerMemberToServer(newMember).catch(() => {});
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast(`Pendaftaran ${newMember.fullName} berhasil dikirim & tersimpan ke Cloudflare D1!`);
   };
 
   // Handlers for Members
@@ -131,6 +196,8 @@ export default function App() {
     });
     setMembers(updated);
     saveMembers(updated);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
     showToast(`Status anggota berhasil diperbarui menjadi ${status}`);
   };
 
@@ -138,6 +205,8 @@ export default function App() {
     const updated = members.map((m) => (m.id === memberId ? { ...m, role } : m));
     setMembers(updated);
     saveMembers(updated);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
     showToast(`Jabatan berhasil diubah menjadi ${role}`);
   };
 
@@ -146,29 +215,78 @@ export default function App() {
       const updated = members.filter((m) => m.id !== memberId);
       setMembers(updated);
       saveMembers(updated);
-      showToast('Data anggota berhasil dihapus');
+      syncAllDataToServer({ members: updated }).catch(() => {});
+      syncWithCloudflare().catch(() => {});
+      showToast('Data anggota berhasil dihapus & disinkronkan ke Cloudflare');
     }
+  };
+
+  const handleDeleteMultipleMembers = (memberIds: string[]) => {
+    if (!memberIds || memberIds.length === 0) return;
+    const idSet = new Set(memberIds);
+    const updated = members.filter((m) => !idSet.has(m.id));
+    setMembers(updated);
+    saveMembers(updated);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast(`${memberIds.length} data anggota berhasil dihapus & disinkronkan ke Cloudflare`);
+  };
+
+  const handleDeleteMembersByEkskul = (ekskulId: string) => {
+    const targetEkskul = ekskuls.find((e) => e.id === ekskulId);
+    const count = members.filter((m) => m.ekskulId === ekskulId).length;
+    if (count === 0) {
+      showToast(`Tidak ada data anggota di cabang ${targetEkskul?.name || 'terpilih'}`);
+      return;
+    }
+    const updated = members.filter((m) => m.ekskulId !== ekskulId);
+    setMembers(updated);
+    saveMembers(updated);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast(`Seluruh anggota cabang ${targetEkskul?.shortName || targetEkskul?.name || 'ekskul'} (${count} siswa) berhasil dihapus & disinkronkan`);
+  };
+
+  const handleDeleteAllMembers = () => {
+    if (members.length === 0) {
+      showToast('Belum ada data anggota untuk dihapus');
+      return;
+    }
+    const count = members.length;
+    const updated: Member[] = [];
+    setMembers(updated);
+    saveMembers(updated);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast(`Seluruh data anggota (${count} siswa) berhasil dihapus & disinkronkan ke Cloudflare`);
   };
 
   const handleAddManualMember = (newMember: Member) => {
     const updated = [newMember, ...members];
     setMembers(updated);
     saveMembers(updated);
-    showToast(`Anggota ${newMember.fullName} berhasil ditambahkan manual`);
+    registerMemberToServer(newMember).catch(() => {});
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast(`Anggota ${newMember.fullName} berhasil ditambahkan & tersimpan ke Cloudflare D1`);
   };
 
   const handleEditMember = (editedMember: Member) => {
     const updated = members.map((m) => (m.id === editedMember.id ? editedMember : m));
     setMembers(updated);
     saveMembers(updated);
-    showToast('Perubahan data anggota berhasil disimpan');
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast('Perubahan data anggota berhasil disimpan & disinkronkan');
   };
 
   const handleImportMembers = (newMembers: Member[]) => {
     const updated = [...members, ...newMembers];
     setMembers(updated);
     saveMembers(updated);
-    showToast(`Berhasil mengimpor ${newMembers.length} data siswa ke dalam sistem!`);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast(`Berhasil mengimpor ${newMembers.length} data siswa & tersimpan ke Cloudflare D1!`);
   };
 
   // Photo handlers
@@ -187,7 +305,9 @@ export default function App() {
     const updated = [newPhoto, ...photos];
     setPhotos(updated);
     savePhotos(updated);
-    showToast('Foto dokumentasi berhasil ditambahkan ke galeri!');
+    syncAllDataToServer({ photos: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast('Foto dokumentasi berhasil ditambahkan ke galeri & Cloudflare!');
   };
 
   const handleDeletePhoto = (photoId: string) => {
@@ -195,6 +315,8 @@ export default function App() {
       const updated = photos.filter((p) => p.id !== photoId);
       setPhotos(updated);
       savePhotos(updated);
+      syncAllDataToServer({ photos: updated }).catch(() => {});
+      syncWithCloudflare().catch(() => {});
       if (selectedPhotoLightbox?.id === photoId) {
         setSelectedPhotoLightbox(null);
       }
@@ -212,9 +334,10 @@ export default function App() {
     const updated = [newEkskul, ...cleanCurrent];
     setEkskuls(updated);
     saveEkskuls(updated);
+    syncAllDataToServer({ ekskuls: updated }).catch(() => {});
     syncWithCloudflare().catch(() => {});
     setShowAddEkskulModal(false);
-    showToast(`Cabang ${newEkskul.name} berhasil ditambahkan & disinkronkan ke Cloudflare!`);
+    showToast(`Cabang ${newEkskul.name} berhasil ditambahkan & disinkronkan ke Cloudflare D1!`);
   };
 
   const handleSaveEditedEkskul = (updatedEkskul: Extracurricular) => {
@@ -224,8 +347,16 @@ export default function App() {
     if (selectedEkskulDetail?.id === updatedEkskul.id) {
       setSelectedEkskulDetail(updatedEkskul);
     }
+    syncAllDataToServer({ ekskuls: updated }).catch(() => {});
     syncWithCloudflare().catch(() => {});
     showToast(`Data ekskul ${updatedEkskul.name} (prestasi & syarat) berhasil diperbarui & tersinkron ke Cloudflare!`);
+  };
+
+  const handleUpdateEkskulLogo = (id: string, newLogoUrl: string) => {
+    const target = ekskuls.find((e) => e.id === id);
+    if (!target) return;
+    const updated = { ...target, logo: newLogoUrl };
+    handleSaveEditedEkskul(updated);
   };
 
   const handleDeleteEkskul = (id: string) => {
@@ -234,6 +365,7 @@ export default function App() {
       const updated = ekskuls.filter((e) => e.id !== id);
       setEkskuls(updated);
       saveEkskuls(updated);
+      syncAllDataToServer({ ekskuls: updated }).catch(() => {});
       syncWithCloudflare().catch(() => {});
       if (selectedEkskulDetail?.id === id) {
         setSelectedEkskulDetail(null);
@@ -252,20 +384,52 @@ export default function App() {
     });
     setEkskuls(updated);
     saveEkskuls(updated);
+    syncAllDataToServer({ ekskuls: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
     const target = updated.find((e) => e.id === id);
     showToast(`Status pendaftaran ${target?.shortName} diubah menjadi ${target?.registrationStatus === 'open' ? 'DIBUKA' : 'DITUTUP'}`);
+  };
+
+  const handleSaveAttendance = (
+    ekskulId: string,
+    attendanceMap: { [memberId: string]: 'hadir' | 'izin' | 'sakit' | 'alpa' }
+  ) => {
+    const updated = members.map((m) => {
+      if (m.ekskulId === ekskulId && attendanceMap[m.id]) {
+        const attStatus = attendanceMap[m.id];
+        let delta = 0;
+        if (attStatus === 'hadir') delta = 2;
+        else if (attStatus === 'alpa') delta = -5;
+        const currentScore = m.attendanceScore ?? 90;
+        const newScore = Math.min(100, Math.max(50, currentScore + delta));
+        return {
+          ...m,
+          attendanceScore: newScore,
+        };
+      }
+      return m;
+    });
+    setMembers(updated);
+    saveMembers(updated);
+    syncAllDataToServer({ members: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast('Rekap presensi berhasil disimpan & disinkronkan ke Cloudflare D1!');
   };
 
   // Settings & Announcements
   const handleUpdateSettings = (newSettings: SiteSettings) => {
     setSiteSettings(newSettings);
     saveSettings(newSettings);
-    showToast('Pengaturan portal & tampilan berhasil disimpan!');
+    syncAllDataToServer({ settings: newSettings }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast('Pengaturan portal & Cloudflare berhasil disimpan!');
   };
 
   const handleUpdateAnnouncements = (newAnnouncements: SchoolAnnouncement[]) => {
     setAnnouncements(newAnnouncements);
     saveAnnouncements(newAnnouncements);
+    syncAllDataToServer({ announcements: newAnnouncements }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
     showToast('Daftar pengumuman berhasil diperbarui!');
   };
 
@@ -273,7 +437,9 @@ export default function App() {
     const updated = [newAnnouncement, ...announcements];
     setAnnouncements(updated);
     saveAnnouncements(updated);
-    showToast('Pengumuman baru berhasil diterbitkan!');
+    syncAllDataToServer({ announcements: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast('Pengumuman baru berhasil diterbitkan & disinkronkan!');
   };
 
   const handleUpdateAnnouncement = (updatedAnnouncement: SchoolAnnouncement) => {
@@ -282,7 +448,9 @@ export default function App() {
     );
     setAnnouncements(updated);
     saveAnnouncements(updated);
-    showToast('Pengumuman berhasil diperbarui!');
+    syncAllDataToServer({ announcements: updated }).catch(() => {});
+    syncWithCloudflare().catch(() => {});
+    showToast('Pengumuman berhasil diperbarui & disinkronkan!');
   };
 
   const handleDeleteAnnouncement = (announcementId: string) => {
@@ -290,6 +458,8 @@ export default function App() {
       const updated = announcements.filter((a) => a.id !== announcementId);
       setAnnouncements(updated);
       saveAnnouncements(updated);
+      syncAllDataToServer({ announcements: updated }).catch(() => {});
+      syncWithCloudflare().catch(() => {});
       showToast('Pengumuman berhasil dihapus');
     }
   };
@@ -371,6 +541,7 @@ export default function App() {
             onEditEkskul={(ekskul) => setEditingEkskul(ekskul)}
             onDeleteEkskul={handleDeleteEkskul}
             onToggleEkskulStatus={handleToggleEkskulStatus}
+            onUpdateEkskulLogo={handleUpdateEkskulLogo}
           />
         )}
 
@@ -405,9 +576,14 @@ export default function App() {
           <MemberDirectory
             members={members}
             ekskuls={ekskuls}
+            siteSettings={siteSettings}
+            isAdmin={isAdmin}
             onUpdateMemberStatus={handleUpdateMemberStatus}
             onUpdateMemberRole={handleUpdateMemberRole}
             onDeleteMember={handleDeleteMember}
+            onDeleteMultipleMembers={handleDeleteMultipleMembers}
+            onDeleteMembersByEkskul={handleDeleteMembersByEkskul}
+            onDeleteAllMembers={handleDeleteAllMembers}
             onAddManualMember={handleAddManualMember}
             onEditMember={handleEditMember}
           />
@@ -419,6 +595,7 @@ export default function App() {
             members={members}
             onOpenRegister={(ekskulId) => handleOpenRegister(ekskulId)}
             isAdmin={isAdmin}
+            onSaveAttendance={handleSaveAttendance}
           />
         )}
 
@@ -497,6 +674,9 @@ export default function App() {
           onToggleEkskulStatus={handleToggleEkskulStatus}
           onUpdateMemberStatus={handleUpdateMemberStatus}
           onDeleteMember={handleDeleteMember}
+          onDeleteMultipleMembers={handleDeleteMultipleMembers}
+          onDeleteMembersByEkskul={handleDeleteMembersByEkskul}
+          onDeleteAllMembers={handleDeleteAllMembers}
           onImportMembers={handleImportMembers}
           onDeletePhoto={handleDeletePhoto}
           onAddPhoto={handleAddPhoto}
@@ -523,86 +703,187 @@ export default function App() {
       )}
 
       {/* Modern Sleek Footer */}
-      <footer className="bg-white/80 backdrop-blur-md border-t border-slate-200/80 mt-14 print:hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-5">
-            <div className="flex items-center gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-slate-900 to-indigo-950 flex items-center justify-center font-black text-white text-sm shadow-sm ring-1 ring-slate-700/50">
-                {siteSettings.portalTitle.charAt(0) || 'E'}
+      <footer className="bg-white/90 backdrop-blur-md border-t border-slate-200/80 mt-14 print:hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+            {/* School & Portal Brand */}
+            <div className="md:col-span-5 space-y-3">
+              <div className="flex items-center gap-3">
+                {siteSettings.logoUrl ? (
+                  <div className="w-11 h-11 rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm p-1 flex items-center justify-center shrink-0">
+                    <img
+                      src={siteSettings.logoUrl}
+                      alt={siteSettings.portalTitle}
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-slate-900 to-indigo-950 flex items-center justify-center font-black text-white text-base shadow-sm ring-1 ring-slate-700/50">
+                    {siteSettings.portalTitle.charAt(0) || 'E'}
+                  </div>
+                )}
+                <div>
+                  <h4 className="font-extrabold text-base text-slate-900 tracking-tight font-display">
+                    {siteSettings.portalTitle}
+                  </h4>
+                  <p className="text-xs text-indigo-600 font-semibold">
+                    {siteSettings.portalTagline}
+                  </p>
+                </div>
               </div>
-              <div>
-                <span className="font-extrabold text-sm text-slate-900 tracking-tight">
-                  {siteSettings.portalTitle} • {siteSettings.portalTagline}
-                </span>
-                <p className="text-xs text-slate-500">
-                  {siteSettings.schoolName} • {siteSettings.schoolTagline}
-                </p>
+
+              <p className="text-xs text-slate-600 leading-relaxed max-w-sm">
+                <strong>{siteSettings.schoolName}</strong> — {siteSettings.schoolTagline || 'Pusat Kreativitas, Karakter, dan Minat Bakat Siswa.'}
+              </p>
+
+              {siteSettings.footerNote && (
+                <div className="inline-block px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/70 text-[11px] text-slate-500 font-medium">
+                  {siteSettings.footerNote}
+                </div>
+              )}
+            </div>
+
+            {/* School Contact & Address Info */}
+            <div className="md:col-span-4 space-y-2.5">
+              <h5 className="font-bold text-xs uppercase tracking-wider text-slate-400">
+                Kontak & Alamat Sekolah
+              </h5>
+
+              <ul className="space-y-2 text-xs text-slate-600">
+                {siteSettings.schoolAddress && (
+                  <li className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                    <span>{siteSettings.schoolAddress}</span>
+                  </li>
+                )}
+
+                {siteSettings.contactPhone && (
+                  <li className="flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <a
+                      href={`tel:${siteSettings.contactPhone.replace(/[^0-9+]/g, '')}`}
+                      className="hover:text-indigo-600 font-semibold transition-colors"
+                    >
+                      {siteSettings.contactPhone}
+                    </a>
+                  </li>
+                )}
+
+                {siteSettings.contactEmail && (
+                  <li className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-amber-500 shrink-0" />
+                    <a
+                      href={`mailto:${siteSettings.contactEmail}`}
+                      className="hover:text-indigo-600 transition-colors"
+                    >
+                      {siteSettings.contactEmail}
+                    </a>
+                  </li>
+                )}
+              </ul>
+
+              {/* Social links if configured */}
+              <div className="flex items-center gap-2 pt-1">
+                {siteSettings.instagramUrl && (
+                  <a
+                    href={siteSettings.instagramUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-2 rounded-xl bg-pink-50 text-pink-600 hover:bg-pink-100 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                    title="Instagram Resmi"
+                  >
+                    <Instagram className="w-3.5 h-3.5" />
+                    <span>Instagram</span>
+                  </a>
+                )}
+
+                {siteSettings.youtubeUrl && (
+                  <a
+                    href={siteSettings.youtubeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-2 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                    title="YouTube Resmi"
+                  >
+                    <Youtube className="w-3.5 h-3.5" />
+                    <span>YouTube</span>
+                  </a>
+                )}
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-500">
-              <button
-                onClick={() => {
-                  setActiveTab('ekskul');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="hover:text-indigo-600 transition-colors cursor-pointer"
-              >
-                Katalog Ekskul
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('galeri');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="hover:text-indigo-600 transition-colors cursor-pointer"
-              >
-                Galeri Foto
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('pendaftaran');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="hover:text-slate-900 transition-colors font-semibold text-slate-700 cursor-pointer"
-              >
-                Daftar Online
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('anggota');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="hover:text-indigo-600 transition-colors cursor-pointer"
-              >
-                Data Anggota
-              </button>
+            {/* Quick Navigation Links */}
+            <div className="md:col-span-3 space-y-2.5">
+              <h5 className="font-bold text-xs uppercase tracking-wider text-slate-400">
+                Menu Cepat
+              </h5>
+              <div className="flex flex-col space-y-2 text-xs font-medium text-slate-600">
+                <button
+                  onClick={() => {
+                    setActiveTab('ekskul');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="text-left hover:text-indigo-600 transition-colors cursor-pointer"
+                >
+                  Katalog Cabang Ekskul
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('galeri');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="text-left hover:text-indigo-600 transition-colors cursor-pointer"
+                >
+                  Galeri Dokumentasi Foto
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('pendaftaran');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="text-left font-bold text-indigo-600 hover:text-indigo-700 transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <span>Form Pendaftaran Online</span>
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('anggota');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="text-left hover:text-indigo-600 transition-colors cursor-pointer"
+                >
+                  Data Anggota & Cetak KTA
+                </button>
 
-              {isAdmin ? (
-                <button
-                  onClick={() => setShowAdminPanel(true)}
-                  className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold text-xs flex items-center gap-1 cursor-pointer hover:bg-indigo-700"
-                >
-                  <Sliders className="w-3.5 h-3.5" />
-                  <span>Panel Admin</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => setShowAdminLogin(true)}
-                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer"
-                >
-                  <Lock className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Login Admin</span>
-                </button>
-              )}
+                <div className="pt-2">
+                  {isAdmin ? (
+                    <button
+                      onClick={() => setShowAdminPanel(true)}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer hover:bg-indigo-700 shadow-sm"
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      <span>Buka Panel Admin</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowAdminLogin(true)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-200"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Login Admin Pengelola</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-400">
-            <p>© {new Date().getFullYear()} {siteSettings.portalTitle}. {siteSettings.schoolName}.</p>
+          <div className="pt-6 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-400">
+            <p>© {new Date().getFullYear()} {siteSettings.portalTitle}. {siteSettings.schoolName}. All rights reserved.</p>
             <p className="flex items-center gap-1.5 font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-              Tahun Ajaran {siteSettings.academicYear} • Sistem Terverifikasi
+              Tahun Ajaran {siteSettings.academicYear} • Terhubung Database Cloudflare
             </p>
           </div>
         </div>

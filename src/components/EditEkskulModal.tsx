@@ -123,48 +123,63 @@ export const EditEkskulModal: React.FC<EditEkskulModalProps> = ({
     reader.readAsDataURL(file);
   };
 
+  const wasOpenRef = useRef(false);
+  const loadedTargetIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (activeData) {
-      setFormData({
-        ...activeData,
-        mission: activeData.mission && activeData.mission.length > 0 ? activeData.mission : [''],
-        requirements: activeData.requirements && activeData.requirements.length > 0 ? activeData.requirements : [
-          'Siswa aktif sekolah',
-          'Mendapat izin tertulis dari orang tua / wali murid',
-        ],
-        achievements: activeData.achievements && activeData.achievements.length > 0 ? activeData.achievements : [
-          { year: '2026', title: 'Partisipasi Prestasi & Kejuaraan Pelajar', rank: 'Tingkat Kota / Wilayah' },
-        ],
-        equipmentProvided: activeData.equipmentProvided && activeData.equipmentProvided.length > 0 ? activeData.equipmentProvided : [''],
-        schedule: activeData.schedule && activeData.schedule.length > 0 ? activeData.schedule : [
-          { day: 'Senin', time: '15.30 - 17.00 WIB', location: 'Sekolah' },
-        ],
-      });
-    } else {
-      setFormData({
-        name: '',
-        shortName: '',
-        category: 'olahraga',
-        tagline: '',
-        description: '',
-        vision: '',
-        mission: ['Melaksanakan latihan terprogram secara rutin.'],
-        coverImage: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=1200&auto=format&fit=crop&q=80',
-        logo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=300&auto=format&fit=crop&q=80',
-        meetingRoom: 'Lapangan Utama',
-        monthlyFee: 'Gratis',
-        equipmentProvided: ['Peralatan standar sekolah'],
-        quota: 30,
-        registrationStatus: 'open',
-        tags: ['Ekstrakurikuler'],
-        coach: { name: '', title: 'Guru Pembina', phone: '' },
-        leader: { name: '', classGrade: 'XI MIPA 1', phone: '' },
-        schedule: [{ day: 'Selasa', time: '15.30 - 17.30 WIB', location: 'Lapangan Utama', notes: 'Latihan Rutin' }],
-        requirements: ['Siswa aktif sekolah', 'Izin orang tua'],
-        achievements: [{ year: '2025', title: 'Prestasi Siswa', rank: 'Tingkat Kota' }],
-      });
+    const isJustOpened = Boolean(isOpen && !wasOpenRef.current);
+    const currentId = activeData?.id || (isEditing ? 'editing' : 'new');
+    const isTargetChanged = currentId !== loadedTargetIdRef.current;
+
+    // Only load initial form data when the modal first opens or the target ID explicitly changes
+    if (isOpen && (isJustOpened || isTargetChanged)) {
+      loadedTargetIdRef.current = currentId;
+      if (activeData) {
+        setFormData({
+          ...activeData,
+          mission: activeData.mission && activeData.mission.length > 0 ? activeData.mission : [''],
+          requirements: activeData.requirements && activeData.requirements.length > 0 ? activeData.requirements : [
+            'Siswa aktif sekolah',
+            'Mendapat izin tertulis dari orang tua / wali murid',
+          ],
+          achievements: activeData.achievements && activeData.achievements.length > 0 ? activeData.achievements : [
+            { year: '2026', title: 'Partisipasi Prestasi & Kejuaraan Pelajar', rank: 'Tingkat Kota / Wilayah' },
+          ],
+          equipmentProvided: activeData.equipmentProvided && activeData.equipmentProvided.length > 0 ? activeData.equipmentProvided : [''],
+          schedule: activeData.schedule && activeData.schedule.length > 0 ? activeData.schedule : [
+            { day: 'Senin', time: '15.30 - 17.00 WIB', location: 'Sekolah' },
+          ],
+        });
+      } else {
+        setFormData({
+          name: '',
+          shortName: '',
+          category: 'olahraga',
+          tagline: '',
+          description: '',
+          vision: '',
+          mission: ['Melaksanakan latihan terprogram secara rutin.'],
+          coverImage: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=1200&auto=format&fit=crop&q=80',
+          logo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=300&auto=format&fit=crop&q=80',
+          meetingRoom: 'Lapangan Utama',
+          monthlyFee: 'Gratis',
+          equipmentProvided: ['Peralatan standar sekolah'],
+          quota: 30,
+          registrationStatus: 'open',
+          tags: ['Ekstrakurikuler'],
+          coach: { name: '', title: 'Guru Pembina', phone: '' },
+          leader: { name: '', classGrade: 'XI MIPA 1', phone: '' },
+          schedule: [{ day: 'Selasa', time: '15.30 - 17.30 WIB', location: 'Lapangan Utama', notes: 'Latihan Rutin' }],
+          requirements: ['Siswa aktif sekolah', 'Izin orang tua'],
+          achievements: [{ year: '2025', title: 'Prestasi Siswa', rank: 'Tingkat Kota' }],
+        });
+      }
     }
-  }, [activeData, isOpen]);
+    if (!isOpen) {
+      loadedTargetIdRef.current = null;
+    }
+    wasOpenRef.current = Boolean(isOpen);
+  }, [activeData?.id, isEditing, isOpen]);
 
   if (isOpen === false) return null;
 

@@ -19,6 +19,7 @@ interface ScheduleViewProps {
   members: Member[];
   onOpenRegister: (ekskulId: string) => void;
   isAdmin?: boolean;
+  onSaveAttendance?: (ekskulId: string, attendanceMap: { [memberId: string]: 'hadir' | 'izin' | 'sakit' | 'alpa' }) => void;
 }
 
 const DAYS_OF_WEEK = ['Semua Hari', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -28,6 +29,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   members,
   onOpenRegister,
   isAdmin = false,
+  onSaveAttendance,
 }) => {
   const [selectedDay, setSelectedDay] = useState<string>('Semua Hari');
   const [selectedEkskul, setSelectedEkskul] = useState<string>('all');
@@ -68,6 +70,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   };
 
   const handleSaveAttendance = () => {
+    if (activePresensiEkskul && onSaveAttendance) {
+      onSaveAttendance(activePresensiEkskul, attendanceState);
+    }
     setPresensiSavedToast(true);
     setTimeout(() => {
       setPresensiSavedToast(false);

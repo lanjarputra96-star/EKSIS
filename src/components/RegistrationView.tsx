@@ -32,18 +32,8 @@ interface RegistrationViewProps {
   siteSettings?: SiteSettings;
 }
 
-// Koleksi Karakter & Foto Anak SD (Siswa Sekolah Dasar Putra & Putri Ceria)
-export const AVATAR_PRESETS = [
-  'https://images.unsplash.com/photo-1544717305-2782549b5136?w=200&auto=format&fit=crop&q=80', // Anak SD berkacamata & tas
-  'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=200&auto=format&fit=crop&q=80', // Siswi cilik tersenyum
-  'https://images.unsplash.com/photo-1595454223600-91fbdd77e233?w=200&auto=format&fit=crop&q=80', // Siswa cilik ceria
-  'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=200&auto=format&fit=crop&q=80', // Siswa SD bersahabat
-  'https://api.dicebear.com/7.x/micah/svg?seed=BintangSD&backgroundColor=b6e3f4,c0aede', // Ilustrasi Siswa Putra
-  'https://api.dicebear.com/7.x/micah/svg?seed=AisyahSD&backgroundColor=ffd5dc,ffdfbf', // Ilustrasi Siswi Putri
-  'https://api.dicebear.com/7.x/micah/svg?seed=FarhanSD&backgroundColor=c0aede,d1d4f9', // Ilustrasi Siswa Cilik
-  'https://api.dicebear.com/7.x/micah/svg?seed=ZahraSD&backgroundColor=ffd5dc,b6e3f4', // Ilustrasi Siswi Berbakat
-  'https://api.dicebear.com/7.x/bottts/svg?seed=RobotCilikSD', // Avatar Maskot Robotik Cilik
-];
+// Foto Siswa Default
+export const DEFAULT_STUDENT_PHOTO = 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=400&auto=format&fit=crop&q=80';
 
 export const DEFAULT_CLASS_OPTIONS = [
   'Kelas 1A', 'Kelas 1B', 'Kelas 1C',
@@ -82,7 +72,7 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
     experience: '',
     uniformSize: 'M',
     parentConsent: true,
-    avatar: AVATAR_PRESETS[0],
+    avatar: DEFAULT_STUDENT_PHOTO,
   });
 
   const [submittedMember, setSubmittedMember] = useState<Member | null>(null);
@@ -135,7 +125,7 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
         month: 'long',
         year: 'numeric',
       }),
-      avatar: formData.avatar || AVATAR_PRESETS[0],
+      avatar: formData.avatar || DEFAULT_STUDENT_PHOTO,
       parentConsent: formData.parentConsent,
       attendanceScore: 100,
     };
@@ -159,7 +149,7 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
       experience: '',
       uniformSize: 'M',
       parentConsent: true,
-      avatar: AVATAR_PRESETS[0],
+      avatar: DEFAULT_STUDENT_PHOTO,
     });
   };
 
@@ -178,7 +168,7 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
     role: 'Calon Anggota',
     status: 'pending',
     joinDate: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }),
-    avatar: formData.avatar || AVATAR_PRESETS[0],
+    avatar: formData.avatar || DEFAULT_STUDENT_PHOTO,
     parentConsent: formData.parentConsent,
   };
 
@@ -204,6 +194,7 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
             <DigitalIdCard
               member={submittedMember}
               ekskul={selectedEkskul}
+              siteSettings={siteSettings}
               schoolName={siteSettings?.schoolName}
               portalTitle={siteSettings?.portalTitle}
               academicYear={siteSettings?.academicYear}
@@ -232,8 +223,24 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
     );
   }
 
+  const isRegistrationClosed = siteSettings?.allowOnlineRegistration === false;
+
   return (
     <div className="space-y-6">
+      {/* Alert when registration closed by admin */}
+      {isRegistrationClosed && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs sm:text-sm flex items-start gap-3 shadow-xs">
+          <div className="p-2 rounded-xl bg-amber-200 text-amber-800 shrink-0 mt-0.5">
+            <AlertCircle className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-amber-950">Pendaftaran Online Sedang Ditutup</h4>
+            <p className="mt-0.5 text-amber-800 text-xs font-medium">
+              {siteSettings?.registrationClosedNotice || 'Pendaftaran online untuk periode ini sedang ditutup sementara oleh pihak sekolah. Silakan hubungi admin sekolah.'}
+            </p>
+          </div>
+        </div>
+      )}
       {/* Header Banner */}
       <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-800/80 relative overflow-hidden">
         <div className="absolute -top-24 -right-24 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -341,77 +348,74 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
                   </div>
                 </div>
 
-                {/* Avatar & Pas Foto Siswa SD */}
-                <div className="sm:col-span-2 p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-900">
-                        Foto Profil / Pas Foto Siswa SD
-                      </label>
-                      <p className="text-[11px] text-slate-500 font-medium">
-                        Pilih karakter cilik anak SD atau upload pas foto siswa langsung dari HP/Laptop.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <label className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-indigo-700 text-xs font-bold border border-indigo-200 shadow-xs cursor-pointer flex items-center gap-1.5 transition-all">
-                        <Upload className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Upload Pas Foto</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const reader = new FileReader();
-                              reader.onloadend = () => {
-                                if (typeof reader.result === 'string') {
-                                  setFormData({ ...formData, avatar: reader.result });
-                                }
-                              };
-                              reader.readAsDataURL(file);
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
+                {/* Pas Foto Siswa SD (Upload Foto Saja) */}
+                <div className="sm:col-span-2 p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100/80 space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-900">
+                      Upload Pas Foto Siswa
+                    </label>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Silakan upload pas foto resmi siswa (berseragam atau berlatar rapi) yang akan dicetak pada KTA digital.
+                    </p>
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    {/* Current Selected Avatar Preview */}
+                  <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+                    {/* Preview Foto */}
                     <div className="relative shrink-0">
-                      <img
-                        src={formData.avatar || AVATAR_PRESETS[0]}
-                        alt="Pas Foto Siswa"
-                        className="w-14 h-14 rounded-2xl object-cover border-2 border-indigo-600 shadow-md bg-white"
-                      />
-                      <span className="absolute -bottom-1 -right-1 px-1.5 py-0.2 rounded-md bg-emerald-600 text-white text-[9px] font-bold shadow-xs">
-                        Aktif
-                      </span>
+                      <div className="w-20 h-24 rounded-2xl overflow-hidden border-2 border-indigo-600 shadow-md bg-white">
+                        <img
+                          src={formData.avatar || DEFAULT_STUDENT_PHOTO}
+                          alt="Pas Foto Siswa"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      {formData.avatar && formData.avatar !== DEFAULT_STUDENT_PHOTO && (
+                        <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-md bg-emerald-600 text-white text-[9px] font-bold shadow-xs">
+                          Terpasang
+                        </span>
+                      )}
                     </div>
 
-                    {/* Presets List */}
-                    <div className="flex-1 overflow-hidden">
-                      <span className="text-[10px] font-bold text-slate-500 block mb-1">
-                        Atau pilih karakter siswa cilik:
-                      </span>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                        {AVATAR_PRESETS.map((avatar, idx) => (
-                          <img
-                            key={idx}
-                            src={avatar}
-                            alt={`Avatar ${idx + 1}`}
-                            onClick={() => setFormData({ ...formData, avatar })}
-                            className={`w-10 h-10 rounded-xl object-cover cursor-pointer border-2 transition-all shrink-0 bg-white ${
-                              formData.avatar === avatar
-                                ? 'border-indigo-600 scale-105 shadow-xs ring-2 ring-indigo-300'
-                                : 'border-slate-200 opacity-60 hover:opacity-100 hover:border-slate-300'
-                            }`}
-                            title="Klik untuk memilih karakter ini"
+                    {/* Action Upload & Reset */}
+                    <div className="flex-1 w-full space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-2 transition-all">
+                          <Upload className="w-4 h-4 text-white" />
+                          <span>Pilih & Upload Foto Siswa</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                  if (typeof reader.result === 'string') {
+                                    setFormData({ ...formData, avatar: reader.result });
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }}
                           />
-                        ))}
+                        </label>
+
+                        {formData.avatar && formData.avatar !== DEFAULT_STUDENT_PHOTO && (
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, avatar: DEFAULT_STUDENT_PHOTO })}
+                            className="px-3 py-2 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-slate-200 hover:border-rose-200 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Hapus Foto</span>
+                          </button>
+                        )}
                       </div>
+
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        Format JPG, PNG, atau WebP. Foto akan langsung disesuaikan ke Kartu Tanda Anggota (KTA).
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -491,10 +495,15 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
             <div className="pt-2">
               <button
                 type="submit"
-                className="w-full py-3 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                disabled={isRegistrationClosed}
+                className={`w-full py-3 px-6 rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 ${
+                  isRegistrationClosed
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
+                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20 cursor-pointer active:scale-98'
+                }`}
               >
                 <Sparkles className="w-4 h-4 text-indigo-200" />
-                <span>Kirim Pendaftaran Siswa</span>
+                <span>{isRegistrationClosed ? 'Pendaftaran Online Sedang Ditutup' : 'Kirim Pendaftaran Siswa'}</span>
               </button>
             </div>
 
@@ -515,6 +524,7 @@ export const RegistrationView: React.FC<RegistrationViewProps> = ({
             <DigitalIdCard
               member={previewMember}
               ekskul={selectedEkskul}
+              siteSettings={siteSettings}
               schoolName={siteSettings?.schoolName}
               portalTitle={siteSettings?.portalTitle}
               academicYear={siteSettings?.academicYear}

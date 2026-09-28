@@ -116,9 +116,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setActiveTab('ekskul')}
               className="flex items-center gap-3 cursor-pointer group shrink-0"
             >
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-800 flex items-center justify-center text-white font-extrabold text-xl shadow-md group-hover:scale-105 transition-transform border border-slate-700/50">
-                {siteSettings.portalTitle.charAt(0) || 'E'}
-              </div>
+              {siteSettings.logoUrl ? (
+                <div className="w-10 h-10 rounded-xl overflow-hidden bg-white border border-slate-200 shadow-sm p-1 flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
+                  <img
+                    src={siteSettings.logoUrl}
+                    alt={siteSettings.portalTitle}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-800 flex items-center justify-center text-white font-extrabold text-xl shadow-md group-hover:scale-105 transition-transform border border-slate-700/50">
+                  {siteSettings.portalTitle.charAt(0) || 'E'}
+                </div>
+              )}
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xl font-black tracking-tight text-slate-900 font-display">
@@ -315,6 +325,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         )}
       </header>
+
+      {/* Running Announcement Ticker Bar */}
+      {siteSettings.showRunningTicker !== false && siteSettings.runningTickerText && (
+        <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 text-xs py-2 px-4 border-b border-amber-600/30 shadow-xs">
+          <div className="max-w-7xl mx-auto flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-950 text-amber-300 text-[10px] font-black uppercase shrink-0 tracking-wider shadow-xs">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              Info Resmi
+            </span>
+            <div className="overflow-hidden relative whitespace-nowrap w-full flex items-center">
+              <span className="font-bold text-slate-950 text-xs tracking-tight">
+                {siteSettings.runningTickerText}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Announcements Modal */}
       {showAnnouncementsModal && (
